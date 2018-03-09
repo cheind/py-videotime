@@ -178,39 +178,3 @@ class TimeDetector:
             # You should see digits 0..9 in order.
 
         return TimeDetector(layout, weights)
-
-
-if __name__ == '__main__':
-    import numpy as np
-    import cv2
-    import argparse
-    import glob
-    import os
-
-    def split(value):
-        return [int(v) for v in value.split(',')]
-
-    parser = argparse.ArgumentParser(description='Train time detector')
-    parser.add_argument('model', help='Model file')
-    parser.add_argument('indir', help='Directory containing images')    
-    parser.add_argument('--verbose', action='store_true')  
-    parser.add_argument('--noise', type=float, help='noise level')
-    parser.add_argument('--shiftx', type=int, help='shift image in x')
-    parser.add_argument('--shifty', type=int, help='shift image in y')
-    args = parser.parse_args()
-
-    detector = TimeDetector.load(args.model)
-    
-    files = glob.glob(os.path.join(args.indir, '*.png'))
-    for f in files:
-        img = cv2.imread(f)
-        if args.noise:
-            img = img.astype(float) / 255 - 0.5
-            img += np.random.normal(0, scale=args.noise, size=img.shape)
-            img = np.clip((img+0.5)*255, 0, 255).astype(np.uint8)
-        if args.shiftx:
-            img = np.roll(img, args.shiftx, axis=1)
-        if args.shifty:
-            img = np.roll(img, args.shifty, axis=0)
-        
-        detector.detect(img, verbose=args.verbose)

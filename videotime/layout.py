@@ -31,6 +31,7 @@ class Layout:
         self.digits = kwargs.pop('digits', [0,1,3,4,6,7,9,10])
         self.ndigits = len(self.digits)
 
+        
         # Image slices for each digit location
         self.slicesx = []
         self.slicesy = []
@@ -47,7 +48,15 @@ class Layout:
         s = 10*dtime[4] + dtime[5]
         micro = (10*dtime[6] + dtime[7])*int(1e4)
         return d.replace(hour=h, minute=m, second=s, microsecond=micro)        
+
+
+axisLayoutLarge = Layout()
+axisLayoutSmall = Layout(digit_origin=[16,4], digit_shape=[16,10], digit_stride=[13,0])
         
+layout_names = {
+    'axis_small' : axisLayoutSmall,
+    'axis_large' : axisLayoutLarge
+}
     
 if __name__ == '__main__':
     import numpy as np
@@ -59,12 +68,16 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='Train time detector')
     parser.add_argument('indir', help='Directory containing images')    
+    parser.add_argument('--layout', help='Time layout name', default='axis_large')
     args = parser.parse_args()
 
     f = glob.glob(os.path.join(args.indir, '*.png'))[0]
     img = cv2.imread(f)
 
-    l = Layout()
+    l = layout_names[args.layout]
+    print(l.digit_origin)
+    print(l.digit_shape)
+    print(l.digit_stride)
 
     import matplotlib.pyplot as plt
     fig, axs = plt.subplots(1, l.ndigits)
