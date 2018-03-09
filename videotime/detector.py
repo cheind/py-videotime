@@ -40,7 +40,7 @@ class TimeDetector:
         except ValueError:
             dtime = None
 
-        if verbose:
+        if verbose and dtime is not None:
             from datetime import datetime
             import matplotlib.pyplot as plt
             fig, axs = plt.subplots(1, rois.shape[0])
