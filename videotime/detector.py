@@ -3,11 +3,47 @@ import pickle
 from videotime.layout import Layout
 
 class TimeDetector:
+    '''Detects superimposed timestamps in videos.
+    
+    The detector performs a trivial template match to determine
+    the digit class for each digit position in a given Layout.
+    
+    Since overlay digits are usually rendered pixel exact, the
+    detector considers only a single image location per digit.
+
+    Extracting the time of a single still image usually takes around 
+    80usecs, or equivalently 12500 images can be processed per second.
+    The detector is quite robust against Gaussian noise but cannot handle
+    images shifts very well. However, this usually does not pose a problem
+    as overlays are rendered exactly.
+    '''
+
     def __init__(self, layout, weights):
+        '''Create detector from time layout and weights.'''
         self.layout = layout
         self.weights = weights
 
     def detect(self, img, **kwargs):
+        '''Detect and parse time overlay.
+
+        Params
+        ------
+        img : HxW, HxWxC
+            Image to be processed
+        
+        Kwargs
+        ------
+        verbose: bool, optional
+            Wheter or not to sho detection result.
+
+        Returns
+        -------
+        time : datetime object
+            Detected time
+        probability: scalar
+            Probability of detection [0..1]
+        '''
+
         verbose = kwargs.pop('verbose', False)
 
         img = np.asarray(img)
@@ -52,19 +88,61 @@ class TimeDetector:
         return dtime, dprobs.min()
 
     def save(self, fname):
+        '''Save detector'''
         with open(fname, 'wb') as handle:
             pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
     
     @staticmethod
     def load(fname):
+        '''Load detector'''
         with open(fname, 'rb') as handle:
             return pickle.load(handle)
 
     @staticmethod
     def train(imgs, **kwargs):
+        '''Train detector from images.
+
+        This function builds a model for each digit (0-9). It assumes
+        10 images to be handed. A layout is assumed that describes the 
+        positioning of the time overlay in images. Each image is assumed
+        to contain a single unique digit in a specific position according
+        to the layout. The position can be controlled via the `digitid` 
+        parameter. If the order of the images is not in digit-order, 
+        `digitorder` can be used to correct the order.
+
+        Params
+        ------
+        imgs : 10xHxW, 10xHxWxC
+            10 images containing all digits of 0-9. Each image
+            contributes one unique digit. The digit location is controlled
+            via `digitid`.
+        
+        Kwargs
+        ------
+        digitorder: array-like, optional
+            Defines which image contains which digit. By default it is 
+            assumed that the images contain digits in order. So first
+            image contributes 0 digit, second image provides digit 1, etc.
+        verbose: bool, optional
+            Whether or not to show extracted digits for debugging.
+        xshifts: int
+            Specifies the amount of +/- shifting in x-direction of images,
+            to compensate for potential image shifts. Usually not necessary 
+            as overlays are rendered at exact positions.
+        yshifts: int
+            Specifies the amount of +/- shifting of images in y-direction
+            to compensate for potential image shifts. Usually not necessary 
+            as overlays are rendered at exact positions.
+
+        Returns
+        -------
+        detector : TimeDetector object
+            The trained detector.
+        '''
+        
         digitorder = kwargs.pop('digitorder', list(range(10)))
         layout = kwargs.pop('layout', Layout())
-        secondid = kwargs.pop('secondid', 7)        
+        digitid = kwargs.pop('digitid', 7) # For Axis cameras this is the minor second digit.
         verbose = kwargs.pop('verbose', False)
         xshifts = kwargs.pop('xshifts', 0)
         yshifts = kwargs.pop('yshifts', 0)
@@ -77,7 +155,7 @@ class TimeDetector:
 
         imgs = (imgs / 255. - 0.5)*2
 
-        idx = layout.digit_ids.index(secondid)
+        idx = layout.digits.index(digitid)
         
         rois = []
         for xs in range(-xshifts,xshifts+1):
@@ -97,6 +175,7 @@ class TimeDetector:
             [ax.axis('off') for ax in axs]
             [ax.imshow(r, origin='upper') for ax,r in zip(axs, rois)]
             plt.show()
+            # You should see digits 0..9 in order.
 
         return TimeDetector(layout, weights)
 
