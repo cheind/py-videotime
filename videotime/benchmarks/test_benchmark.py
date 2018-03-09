@@ -6,7 +6,7 @@ import cv2
 ETCPATH = os.path.join(os.path.dirname(__file__),'..','..','etc')
 
 d = vt.TimeDetector.load(os.path.join(ETCPATH, 'videotime.npz'))
-f = glob.glob(os.path.join(ETCPATH, '*.png'))[0]
+f = glob.glob(os.path.join(ETCPATH, 'test0', '*.png'))[0]
 img = cv2.imread(f)
 
 def run_detector():

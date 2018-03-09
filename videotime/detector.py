@@ -13,20 +13,26 @@ class TimeDetector:
         verbose = kwargs.pop('verbose', False)
 
         if img.ndim == 3:
-            img = img[..., 0]
-        
-        img = (img / 255. - 0.5)*2
+            img = img[..., 0]        
 
         # Extract letters from HH:MM:SS.TT
         rois = np.array([img[ys, xs] for xs, ys in zip(self.xslices, self.yslices)])
 
-        scores = np.einsum('ljk, ijk ->li', rois, self.letters)
+        # Scale/shift to [-1, 1]
+        srois = (rois / 255. - 0.5)*2
+        
+        # Inner product of templates with letter positions to yield scores
+        scores = np.tensordot(srois, self.letters, axes=([1,2], [1,2]))
 
+        # Probabilities for each roi according to the alphabet (softmax)
         def softmax(x):
-            return np.exp(x) / np.exp(x).sum(axis=1, keepdims=True)
+            # e ^ (x - max(x)) / sum(e^(x - max(x))
+            xn = x - x.max(axis=1, keepdims=True)
+            ex = np.exp(xn)
+            return  ex / ex.sum(axis=1, keepdims=True)
 
-        # Probabilities for each roi according to the alphabet
         probs = softmax(scores)
+        print(probs.max(axis=1))
 
         # Use max probs for each position as detection result
         dtime = np.argmax(probs, axis=1)       
@@ -50,7 +56,7 @@ class TimeDetector:
 
     @staticmethod
     def train(imgs, **kwargs):
-        digitorder = kwargs.pop('digitorder', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+        digitorder = kwargs.pop('digitorder', list(range(10)))
         layout = kwargs.pop('layout', {'x':22, 'y':6, 'w':14, 'h':21, 'rpad':4, 'npos' : 11})
         verbose = kwargs.pop('verbose', False)
         
@@ -117,6 +123,9 @@ if __name__ == '__main__':
     parser.add_argument('model', help='Model file')
     parser.add_argument('indir', help='Directory containing images')    
     parser.add_argument('--verbose', action='store_true')  
+    parser.add_argument('--noise', type=float, help='noise level')
+    parser.add_argument('--shiftx', type=int, help='shift image in x')
+    parser.add_argument('--shifty', type=int, help='shift image in y')
     args = parser.parse_args()
 
     model = np.load(args.model)
@@ -124,4 +133,14 @@ if __name__ == '__main__':
 
     files = glob.glob(os.path.join(args.indir, '*.png'))
     for f in files:
-        detector.detect(cv2.imread(f), verbose=args.verbose)
+        img = cv2.imread(f)
+        if args.noise:
+            img = img.astype(float) / 255 - 0.5
+            img += np.random.normal(0, scale=args.noise, size=img.shape)
+            img = np.clip((img+0.5)*255, 0, 255).astype(np.uint8)
+        if args.shiftx:
+            img = np.roll(img, np.random.randint(-args.shiftx, args.shiftx), axis=1)
+        if args.shifty:
+            img = np.roll(img, np.random.randint(-args.shifty, args.shifty), axis=0)
+        
+        detector.detect(img, verbose=args.verbose)
