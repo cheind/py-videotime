@@ -1,28 +1,27 @@
 import numpy as np
-
-from videotime.common import Alphabet
+import pickle
+from videotime.layout import Layout
 
 class TimeDetector:
-    def __init__(self, layout, letters, **kwargs):
+    def __init__(self, layout, weights):
         self.layout = layout
-        self.letters = letters
-        self.xslices = [self.xyslice(self.layout, i)[0] for i in range(self.layout['npos'])]
-        self.yslices = [self.xyslice(self.layout, i)[1] for i in range(self.layout['npos'])]
+        self.weights = weights
 
     def detect(self, img, **kwargs):
         verbose = kwargs.pop('verbose', False)
 
+        img = np.asarray(img)
         if img.ndim == 3:
             img = img[..., 0]        
 
         # Extract letters from HH:MM:SS.TT
-        rois = np.array([img[ys, xs] for xs, ys in zip(self.xslices, self.yslices)])
+        rois = np.array([img[ys, xs] for xs, ys in zip(self.layout.slicesx, self.layout.slicesy)])
 
         # Scale/shift to [-1, 1]
         srois = (rois / 255. - 0.5)*2
         
-        # Inner product of templates with letter positions to yield scores
-        scores = np.tensordot(srois, self.letters, axes=([1,2], [1,2]))
+        # Inner product of digit positions and weights to yield scores
+        scores = np.tensordot(srois, self.weights, axes=([1,2], [1,2]))
 
         # Probabilities for each roi according to the alphabet (softmax)
         def softmax(x):
@@ -31,83 +30,76 @@ class TimeDetector:
             ex = np.exp(xn)
             return  ex / ex.sum(axis=1, keepdims=True)
 
+        # Use max probs for each digit position as detection result
         probs = softmax(scores)
-        print(probs.max(axis=1))
-
-        # Use max probs for each position as detection result
         dtime = np.argmax(probs, axis=1)       
         dprobs = probs[np.arange(probs.shape[0]), dtime]
- 
-        strtime = '{}{}:{}{}:{}{}.{}{}'.format(
-            dtime[0],dtime[1],dtime[3], 
-            dtime[4],dtime[6],dtime[7],
-            dtime[9],dtime[10])
-        
+
+        try:
+            dtime = self.layout.build_time(dtime)
+        except ValueError:
+            dtime = None
+
         if verbose:
+            from datetime import datetime
             import matplotlib.pyplot as plt
             fig, axs = plt.subplots(1, rois.shape[0])
-            fig.suptitle('Detected time {} - {}%'.format(strtime, dprobs.min()))
+            fig.suptitle('Detected time {} - {}%'.format(datetime.strftime(dtime, '%H:%M:%S.%f'), dprobs.min()*100))
             [ax.axis('off') for ax in axs]
             [ax.imshow(l, origin='upper') for ax,l in zip(axs, rois)]
             plt.show()
 
-        return dtime, dprobs.min(), strtime
-        
+        return dtime, dprobs.min()
+
+    def save(self, fname):
+        with open(fname, 'wb') as handle:
+            pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    @staticmethod
+    def load(fname):
+        with open(fname, 'rb') as handle:
+            return pickle.load(handle)
 
     @staticmethod
     def train(imgs, **kwargs):
         digitorder = kwargs.pop('digitorder', list(range(10)))
-        layout = kwargs.pop('layout', {'x':22, 'y':6, 'w':14, 'h':21, 'rpad':4, 'npos' : 11})
+        layout = kwargs.pop('layout', Layout())
+        secondid = kwargs.pop('secondid', 7)        
         verbose = kwargs.pop('verbose', False)
-        
-        # Order input images
+        xshifts = kwargs.pop('xshifts', 0)
+        yshifts = kwargs.pop('yshifts', 0)
+
         so = np.argsort(digitorder)
-        imgs = np.array(imgs, dtype=np.float)[so]
+        imgs = np.asarray(imgs)[so]
+        
+        if imgs.ndim == 4:
+            imgs = imgs[..., 0]
+
         imgs = (imgs / 255. - 0.5)*2
 
+        idx = layout.digit_ids.index(secondid)
+        
         rois = []
-        xslices = []
-        yslices = []
+        for xs in range(-xshifts,xshifts+1):
+            for ys in range(-yshifts,yshifts+1):
+                rimgs = np.roll(imgs, xs, axis=2)
+                rimgs = np.roll(rimgs, ys, axis=1)
+                rois.append(rimgs[:, layout.slicesy[idx], layout.slicesx[idx]])
+        nshifts = (2*xshifts+1) * (2*yshifts+1)
+        rois = np.concatenate(rois).reshape(nshifts, 10, layout.digit_shape[0], layout.digit_shape[1])
+        rois = np.mean(rois, axis=0)
 
-        # Extract second digits from last second pos HH:MM:SS.TT
-        xs, ys = TimeDetector.xyslice(layout, 7)        
-        rois.append(imgs[:, ys, xs, 0])
-        xslices.append(xs)
-        yslices.append(ys)
-
-        # :
-        xs, ys = TimeDetector.xyslice(layout, 5)
-        rois.append(np.expand_dims(imgs[0, ys, xs, 0], 0))
-        xslices.append(xs)
-        yslices.append(ys)
-
-        # .
-        xs, ys = TimeDetector.xyslice(layout, 8)
-        rois.append(np.expand_dims(imgs[0, ys, xs, 0], 0))
-        xslices.append(xs)
-        yslices.append(ys)
-
-        letters = np.concatenate(rois) # 12xHxW
+        weights = rois
 
         if verbose:
             import matplotlib.pyplot as plt
-            fig, axs = plt.subplots(1, layout['npos'])
+            fig, axs = plt.subplots(1, 10)
             [ax.axis('off') for ax in axs]
-            [ax.imshow(l, origin='upper') for ax,l in zip(axs, letters)]
+            [ax.imshow(r, origin='upper') for ax,r in zip(axs, rois)]
             plt.show()
 
-        return {'layout' : layout, 'letters' : letters}
-        
-    @staticmethod
-    def xyslice(layout, idx): 
-        '''Extract the x/y slice for i-th letter in the image.'''       
-        xs = layout['x'] + (layout['w'] + layout['rpad'])*idx
-        return slice(xs, xs+layout['w']), slice(layout['y'], layout['y'] + layout['h'])
+        return TimeDetector(layout, weights)
 
-    @staticmethod
-    def load(fname):
-        model = np.load(fname)
-        return TimeDetector(layout=model['layout'].item(), letters=model['letters'])
 
 if __name__ == '__main__':
     import numpy as np
@@ -128,9 +120,8 @@ if __name__ == '__main__':
     parser.add_argument('--shifty', type=int, help='shift image in y')
     args = parser.parse_args()
 
-    model = np.load(args.model)
-    detector = TimeDetector(layout=model['layout'].item(), letters=model['letters'])
-
+    detector = TimeDetector.load(args.model)
+    
     files = glob.glob(os.path.join(args.indir, '*.png'))
     for f in files:
         img = cv2.imread(f)
@@ -139,8 +130,8 @@ if __name__ == '__main__':
             img += np.random.normal(0, scale=args.noise, size=img.shape)
             img = np.clip((img+0.5)*255, 0, 255).astype(np.uint8)
         if args.shiftx:
-            img = np.roll(img, np.random.randint(-args.shiftx, args.shiftx), axis=1)
+            img = np.roll(img, args.shiftx, axis=1)
         if args.shifty:
-            img = np.roll(img, np.random.randint(-args.shifty, args.shifty), axis=0)
+            img = np.roll(img, args.shifty, axis=0)
         
         detector.detect(img, verbose=args.verbose)
