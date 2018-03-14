@@ -22,7 +22,7 @@ if __name__ == '__main__':
         if not b:
             break
 
-        dtime, prob = detector.detect(img)
+        dtime, prob = detector.detect(img, verbose=args.verbose)
         timestamps.append(dtime)
         print(dtime)
 
